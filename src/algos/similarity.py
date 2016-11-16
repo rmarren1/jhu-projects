@@ -4,6 +4,8 @@
 import numpy as numpy
 from cdtw import pydtw
 import numpy as np
+from sklearn.cluster import AffinityPropagation
+from sklearn import metrics
 
 def distance_matrix(x, metric):
 	n = x.shape[0]
@@ -25,3 +27,11 @@ def dtw(x):
 			))
 		return d.get_dist()
 	return distance_matrix(x, metric)
+
+def ap(x):
+	x = -x
+	af = AffinityPropagation(affinity='precomputed')
+	af.fit(x)
+	cluster_centers_indices = af.cluster_centers_indices_
+	n_clusters_ = len(cluster_centers_indices)
+	return n_clusters_
