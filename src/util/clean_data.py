@@ -33,4 +33,11 @@ def get_data(f_names):
     return map(lambda p: np.loadtxt(p), f_names)
 
 def run_function(fnc, data):   
-    return map(lambda d: fnc(d), data)
+    result = []
+    checkpoints = np.append(np.arange(0, len(data), len(data)/10), [np.inf])
+    for d in xrange(len(data)):
+        result.append(fnc(data[d]))
+        if d == checkpoints[0]:
+            checkpoints = checkpoints[1:]
+            print "Processed %04d of %04d brains." % (d, len(data))
+    return result

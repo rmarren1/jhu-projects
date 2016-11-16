@@ -2,8 +2,7 @@
 # Author: Ryan Marren
 # Date: November 2016
 import numpy as numpy
-from scipy.spatial.distance import euclidean
-from fastdtw import fastdtw
+from cdtw import pydtw
 import numpy as np
 
 def distance_matrix(x, metric):
@@ -18,5 +17,11 @@ def distance_matrix(x, metric):
 
 def dtw(x):
 	def metric(x, y):
-		return fastdtw(x, y, dist=euclidean)[0]
+		d = pydtw.dtw(x, y, pydtw.Settings(step='p0sym',
+										window = 'palival',
+										param=2.0,
+										norm=False,
+										compute_path=False
+			))
+		return d.get_dist()
 	return distance_matrix(x, metric)

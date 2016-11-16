@@ -1,2 +1,3 @@
 data/*
 *.ipybn_checkpoint*
+*.pyc
