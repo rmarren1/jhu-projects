@@ -29,9 +29,11 @@ def dtw(x):
 	return distance_matrix(x, metric)
 
 def ap(x):
-	x = -x
 	af = AffinityPropagation(affinity='precomputed')
 	af.fit(x)
-	cluster_centers_indices = af.cluster_centers_indices_
-	n_clusters_ = len(cluster_centers_indices)
-	return n_clusters_
+	labs = af.labels_
+	k = len(labs)
+	clusters = [[] for _ in range(np.max(labs) + 1)]
+	for i in range(k):
+		clusters[labs[i]].append(i)
+	return clusters
