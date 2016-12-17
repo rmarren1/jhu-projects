@@ -6,6 +6,7 @@
 * http://link.springer.com/article/10.1007/s10115-015-0878-8
 * https://arxiv.org/pdf/1608.01072v1.pdf
 * http://www.sciencedirect.com/science/article/pii/S0020025516303796 < fuzzy or kernel?
+* http://www.bmva.org/bmvc/1998/pdf/p038.pdf < this looks lit
 
 ### Similar studies
 * https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4764481/
