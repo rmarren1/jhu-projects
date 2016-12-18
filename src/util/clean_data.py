@@ -5,7 +5,9 @@
 import csv
 import numpy as np
 import os
-from sklearn.cluster import KMeans
+from sklearn.cluster import KMeans, DBSCAN
+from sklearn.neighbors import KNeighborsClassifier as KNN
+import matplotlib.pyplot as plt
 
 def get_metadata(metadata_path, args):
     patient_list = []
@@ -120,11 +122,14 @@ def get_views(data, encoder, mapping, h):
 
 def train(data, params):
     encoder = get_kmeans_encoder(data, params['k'])
+    #print 'K-means done. Means: ', encoder.cluster_centers_.shape
     words = encode_samples(data, encoder, 'a')
+    #print 'Words: ', words
     dictionary = get_dict(params['k'], 'a')
     mapping = get_word_map(dictionary)
     W, L, R = get_views(data, encoder, mapping, params['h'])
     phi_l, phi_r = CCA(L, R, params['d_cont'])
+    #print 'Correl', correl_test(L, R, phi_l, phi_r)
     S = np.vstack([phi_l.T.dot(L), phi_r.T.dot(R)])
     phi_s, phi_w = CCA(S, W, params['d_words'])
     model = {
@@ -146,6 +151,8 @@ def embed(data, M):
     proj_l = M['phi_l'].T.dot(L)
     proj_r = M['phi_r'].T.dot(R)
     emb = np.vstack([proj_w, proj_l, proj_r])
+    emb = mean_center(emb)
+    emb = emb / np.linalg.norm(emb, axis=0)
     return emb
 
 
@@ -170,6 +177,7 @@ def load_and_randomize_data(good_md, n):
 def split_data(data, labels, n_train, n_tune, n_test):
     D = {}
     L = {}
+    data = run_function(mean_center, data)
     D['train'] = split_groups(data[:n_train],
                                  labels[:n_train])
     D['train']['a'] = concat_group(D['train']['a'])
@@ -178,6 +186,8 @@ def split_data(data, labels, n_train, n_tune, n_test):
     L['tune'] = labels[n_train:n_train+n_tune]
     D['test'] = data[:-n_test]
     L['test'] = labels[:-n_test]
+    D['train']['a'] = mean_center(D['train']['a'])
+    D['train']['c'] = mean_center(D['train']['c'])
     return D, L
 
 def transpose(x):
@@ -186,74 +196,73 @@ def transpose(x):
 def mean_center(x):
     return x - np.mean(x, axis=1).reshape(-1, 1)
 
+def get_subspace(embedding):
+    _, evecs = np.linalg.eigh(embedding.dot(embedding.T))
+    print 'evecs', evecs.shape
+    subspace = evecs[:, -20:]
+    return subspace
+
 def hyper_param_eval(D, L, params):
-    ind_a = np.random.choice(D['train']['a'].shape[1], 20000)
-    ind_c = np.random.choice(D['train']['c'].shape[1], 20000)
-    model_a = train(D['train']['a'][:, ind_a], params)
-    model_c = train(D['train']['c'][:, ind_c], params)
-    embedding_a = embed(D['train']['a'][:, ind_a], model_a)
-    embedding_c = embed(D['train']['c'][:, ind_c], model_c)
-    embedding_a = mean_center(embedding_a)
-    embedding_c = mean_center(embedding_c)
-    ind_a = np.random.choice(embedding_a.shape[1], 1000)
-    ind_c = np.random.choice(embedding_c.shape[1], 1000)
-    return evaluate(D['tune'], L['tune'], model_a, model_c,
-                    embedding_a[:, ind_a], embedding_c[:, ind_c])
+    D_tr = np.hstack([D['train']['a'][:, :10000], 
+                       D['train']['c'][:, :10000]])
+    labels = np.hstack([[1] * 10000, [2] * 10000])
+    model = train(D_tr, params)
+    emb_tr = embed(D_tr, model)
+    classifier = KNN(20).fit(emb_tr.T, labels)
+    #subspace_a = get_subspace(embedding_a)
+    #print 'SS A: ', subspace_a.shape
+    #subspace_c = get_subspace(embedding_c)
+    #print 'SS C: ', subspace_c.shape
+    emb_tu = run_function(lambda x: embed(x, model), D['tune'])
+    accuracy = evaluate(emb_tu,
+                      L['tune'],
+                      classifier)
+    return accuracy
 
 def full_train(D, L, params):
     model_a = train(D['train']['a'], params)
+    print 'Model A Trained.'
     model_c = train(D['train']['c'], params)
+    print 'Model C Trained'
     embedding_a = embed(D['train']['a'], model_a)
+    print 'Found embeddings of language A'
     embedding_c = embed(D['train']['c'], model_c)
-    embedding_a = mean_center(embedding_a)
-    embedding_c = mean_center(embedding_c)
-    tup = (model_a, model_c, embedding_a, embedding_c)
-    ind_a = np.random.choice(embedding_a.shape[1], 10000)
-    ind_c = np.random.choice(embedding_c.shape[1], 10000)
+    print 'Found embeddings of language C'
+    ind_a = np.random.choice(embedding_a.shape[1], 6000)
+    ind_c = np.random.choice(embedding_c.shape[1], 6000)
+    embedding_a = mean_center(embedding_a)[:, ind_a]
+    embedding_c = mean_center(embedding_c)[:, ind_c]
+    exemplars_a = get_exemplars(embedding_a)
+    print 'Found exemplars of language A', exemplars_a.shape
+    exemplars_c = get_exemplars(embedding_c)
+    print 'Found exemplars of language C', exemplars_c.shape
+    tup = (model_a, model_c, exemplars_a, exemplars_c)
     return evaluate(D['tune'], L['tune'], model_a, model_c,
-                    embedding_a[:, ind_a], embedding_c[:, ind_c]), tup
+                    exemplars_a, exemplars_c), tup
 
-def evaluate(D, labels, model_a, model_c, embedding_a, embedding_c):
-    count_ratios = []
-    for i, b in enumerate(D):
-        emb_test_a = embed(b, model_a)
-        emb_test_a = mean_center(emb_test_a)
-        emb_test_c = embed(b, model_c)
-        emb_test_c = mean_center(emb_test_c)
-        a_scores = []
-        c_scores = []
-        for o in emb_test_a.T:
-            o = o.reshape(-1, 1)
-            a_score = np.linalg.norm(embedding_a - o, axis=0)
-            a_score = np.sum(a_score[np.argsort(a_score)[:10]])
-            a_scores.append(a_score)
-        for o in emb_test_c.T:
-            o = o.reshape(-1, 1)
-            c_score = np.linalg.norm(embedding_c - o, axis=0)
-            c_score = np.sum(c_score[np.argsort(c_score)[:10]])
-            c_scores.append(c_score)
-        real = labels[i]
-        a_scores = np.array(a_scores)
-        c_scores = np.array(c_scores)
-        a_count = np.sum((c_scores - a_scores) > 0)
-        c_count = np.sum((a_scores - c_scores) > 0)
-        try:
-            count_ratios.append(float(a_count) / c_count)
-        except:
-            count_ratios.append(a_count)
-            print 'ERROR, ZERO COUNT DETECTED'
-    def erf(r):
-        guess_r = np.array(count_ratios > r)
-        guess_l = np.array(count_ratios < r)
-        correct = np.array(labels == 1)
-        r_loss = np.sum(np.abs(guess_r - correct))
-        l_loss = np.sum(np.abs(guess_l - correct))
-        return min(r_loss, l_loss)
-    H = np.linspace(-5, 5, 10000)
-    ERF = map(lambda x: erf(x), H)
-    best = np.min(ERF)
-    best_ind = np.argmin(ERF)
-    ratio = H[best_ind]
+def evaluate(embeddings, labels, classifier):
+    correct = 0
+    for i, brain in enumerate(embeddings):
+        evidence = classifier.predict_proba(brain.T)
+        a_evidence = np.sum(evidence[:, 0])
+        c_evidence = np.sum(evidence[:, 1])
+        guess = 1 if a_evidence > c_evidence else 2
+        if guess == labels[i]:
+            correct = correct + 1
+    return float(correct) / len(labels)
+
+def accuracy(ratios, labels, threshold):
     n = len(labels)
-    acc = float(n - best) / n
-    return acc, ratio, count_ratios
+    guess_r = np.array(ratios > threshold)
+    guess_l = np.array(ratios < threshold)
+    correct = np.array(labels == 1)
+    r_loss = np.sum(np.abs(guess_r - correct))
+    l_loss = np.sum(np.abs(guess_l - correct))
+    return float(n - min(r_loss, l_loss)) / n
+
+def max_ratio(ratios, labels):
+    H = np.linspace(-1, 1, 100)
+    ERF = map(lambda x: accuracy(ratios, labels, x), H)
+    best_ind = np.argmin(ERF)
+    return H[best_ind]
+
