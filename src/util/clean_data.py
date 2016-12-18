@@ -54,7 +54,7 @@ def run_function(fnc, data):
 def split_groups(data, dx_groups):
     data_a = [i for (i, v) in zip(data, dx_groups == 1) if v]
     data_c = [i for (i, v) in zip(data, dx_groups == 2) if v]
-    return data_a, data_c
+    return {'a': data_a, 'c': data_c}
 
 def concat_group(data):
     return np.hstack(data)
@@ -156,3 +156,104 @@ def correl_test(Z, W, phi_z, phi_w):
     var_z = phi_z.T.dot(Z).dot(Z.T).dot(phi_z)
     var_w = phi_w.T.dot(W).dot(W.T).dot(phi_w)
     return num / np.sqrt(var_z * var_w)
+
+def load_and_randomize_data(good_md, n):
+    f_names = np.array(map(lambda x: x['FILE_ID'], good_md))
+    dx_groups = np.array(map(lambda x: int(x['DX_GROUP']), good_md))
+    p = np.random.permutation(n)
+    f_names = f_names[p]
+    dx_groups = dx_groups[p]
+    data = get_data(f_names)
+    data = run_function(transpose, data)
+    return data, dx_groups
+
+def split_data(data, labels, n_train, n_tune, n_test):
+    D = {}
+    L = {}
+    D['train'] = split_groups(data[:n_train],
+                                 labels[:n_train])
+    D['train']['a'] = concat_group(D['train']['a'])
+    D['train']['c'] = concat_group(D['train']['c'])
+    D['tune'] = data[n_train:n_train+n_tune]
+    L['tune'] = labels[n_train:n_train+n_tune]
+    D['test'] = data[:-n_test]
+    L['test'] = labels[:-n_test]
+    return D, L
+
+def transpose(x):
+    return x.T
+
+def mean_center(x):
+    return x - np.mean(x, axis=1).reshape(-1, 1)
+
+def hyper_param_eval(D, L, params):
+    ind_a = np.random.choice(D['train']['a'].shape[1], 20000)
+    ind_c = np.random.choice(D['train']['c'].shape[1], 20000)
+    model_a = train(D['train']['a'][:, ind_a], params)
+    model_c = train(D['train']['c'][:, ind_c], params)
+    embedding_a = embed(D['train']['a'][:, ind_a], model_a)
+    embedding_c = embed(D['train']['c'][:, ind_c], model_c)
+    embedding_a = mean_center(embedding_a)
+    embedding_c = mean_center(embedding_c)
+    ind_a = np.random.choice(embedding_a.shape[1], 1000)
+    ind_c = np.random.choice(embedding_c.shape[1], 1000)
+    return evaluate(D['tune'], L['tune'], model_a, model_c,
+                    embedding_a[:, ind_a], embedding_c[:, ind_c])
+
+def full_train(D, L, params):
+    model_a = train(D['train']['a'], params)
+    model_c = train(D['train']['c'], params)
+    embedding_a = embed(D['train']['a'], model_a)
+    embedding_c = embed(D['train']['c'], model_c)
+    embedding_a = mean_center(embedding_a)
+    embedding_c = mean_center(embedding_c)
+    tup = (model_a, model_c, embedding_a, embedding_c)
+    ind_a = np.random.choice(embedding_a.shape[1], 10000)
+    ind_c = np.random.choice(embedding_c.shape[1], 10000)
+    return evaluate(D['tune'], L['tune'], model_a, model_c,
+                    embedding_a[:, ind_a], embedding_c[:, ind_c]), tup
+
+def evaluate(D, labels, model_a, model_c, embedding_a, embedding_c):
+    count_ratios = []
+    for i, b in enumerate(D):
+        emb_test_a = embed(b, model_a)
+        emb_test_a = mean_center(emb_test_a)
+        emb_test_c = embed(b, model_c)
+        emb_test_c = mean_center(emb_test_c)
+        a_scores = []
+        c_scores = []
+        for o in emb_test_a.T:
+            o = o.reshape(-1, 1)
+            a_score = np.linalg.norm(embedding_a - o, axis=0)
+            a_score = np.sum(a_score[np.argsort(a_score)[:10]])
+            a_scores.append(a_score)
+        for o in emb_test_c.T:
+            o = o.reshape(-1, 1)
+            c_score = np.linalg.norm(embedding_c - o, axis=0)
+            c_score = np.sum(c_score[np.argsort(c_score)[:10]])
+            c_scores.append(c_score)
+        real = labels[i]
+        a_scores = np.array(a_scores)
+        c_scores = np.array(c_scores)
+        a_count = np.sum((c_scores - a_scores) > 0)
+        c_count = np.sum((a_scores - c_scores) > 0)
+        try:
+            count_ratios.append(float(a_count) / c_count)
+        except:
+            count_ratios.append(a_count)
+            print 'ERROR, ZERO COUNT DETECTED'
+    def erf(r):
+        guess_r = np.array(count_ratios > r)
+        guess_l = np.array(count_ratios < r)
+        correct = np.array(labels == 1)
+        r_loss = np.sum(np.abs(guess_r - correct))
+        l_loss = np.sum(np.abs(guess_l - correct))
+        return min(r_loss, l_loss)
+    H = np.linspace(-5, 5, 10000)
+    ERF = map(lambda x: erf(x), H)
+    best = np.min(ERF)
+    best_ind = np.argmin(ERF)
+    ratio = H[best_ind]
+    n = len(labels)
+    acc = float(n - best) / n
+    return acc, ratio, count_ratios
