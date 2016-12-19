@@ -120,7 +120,7 @@ def get_views(data, encoder, mapping, h):
     R = context(words, h, 'R', mapping)
     return W, L, R
 
-def train(data, params):
+def train(data, labels, params):
     encoder = get_kmeans_encoder(data, params['k'])
     #print 'K-means done. Means: ', encoder.cluster_centers_.shape
     words = encode_samples(data, encoder, 'a')
@@ -140,6 +140,9 @@ def train(data, params):
         'mapping' : mapping,
         'params' : params
     }
+    emb_tr = embed(data, model)
+    classifier = KNN(params['nn']).fit(emb_tr.T, labels)
+    model['classifier'] = classifier
     return model
 
 def embed(data, M):
@@ -152,7 +155,6 @@ def embed(data, M):
     proj_r = M['phi_r'].T.dot(R)
     emb = np.vstack([proj_w, proj_l, proj_r])
     emb = mean_center(emb)
-    emb = emb / np.linalg.norm(emb, axis=0)
     return emb
 
 
@@ -180,14 +182,12 @@ def split_data(data, labels, n_train, n_tune, n_test):
     data = run_function(mean_center, data)
     D['train'] = split_groups(data[:n_train],
                                  labels[:n_train])
-    D['train']['a'] = concat_group(D['train']['a'])
-    D['train']['c'] = concat_group(D['train']['c'])
+    D['train']['a'] = D['train']['a']
+    D['train']['c'] = D['train']['c']
     D['tune'] = data[n_train:n_train+n_tune]
     L['tune'] = labels[n_train:n_train+n_tune]
     D['test'] = data[:-n_test]
     L['test'] = labels[:-n_test]
-    D['train']['a'] = mean_center(D['train']['a'])
-    D['train']['c'] = mean_center(D['train']['c'])
     return D, L
 
 def transpose(x):
@@ -202,22 +202,40 @@ def get_subspace(embedding):
     subspace = evecs[:, -20:]
     return subspace
 
+def baseline_embed(data, kmeans):
+    labs = kmeans.predict(data.T)
+    return np.hstack(map(lambda l: kmeans.cluster_centers_[l].reshape(-1, 1), labs))
+
+def baseline_eval(D, L, params):
+    np.random.shuffle(D['train']['a'])
+    np.random.shuffle(D['train']['c'])
+    D_a = mean_center(concat_group(D['train']['a']))
+    D_c = mean_center(concat_group(D['train']['c']))
+    samples = 3000
+    D_tr = np.hstack((D_a[:, :samples], D_c[:, :samples]))
+    labels = np.hstack(([1] * samples, [2] * samples))
+    knn = KNN(params['nn']).fit(D_tr.T, labels)
+    model = {}
+    model['classifier'] = knn
+    accuracy = evaluate(D['tune'],
+                      L['tune'],
+                      model)
+    return accuracy, model
+
 def hyper_param_eval(D, L, params):
-    D_tr = np.hstack([D['train']['a'][:, :10000], 
-                       D['train']['c'][:, :10000]])
-    labels = np.hstack([[1] * 10000, [2] * 10000])
-    model = train(D_tr, params)
-    emb_tr = embed(D_tr, model)
-    classifier = KNN(20).fit(emb_tr.T, labels)
-    #subspace_a = get_subspace(embedding_a)
-    #print 'SS A: ', subspace_a.shape
-    #subspace_c = get_subspace(embedding_c)
-    #print 'SS C: ', subspace_c.shape
+    np.random.shuffle(D['train']['a'])
+    np.random.shuffle(D['train']['c'])
+    D_a = mean_center(concat_group(D['train']['a']))
+    D_c = mean_center(concat_group(D['train']['c']))
+    samples = 3000
+    D_tr = np.hstack((D_a[:, :samples], D_c[:, :samples]))
+    labels = np.hstack(([1] * samples, [2] * samples))
+    model = train(D_tr, labels, params)
     emb_tu = run_function(lambda x: embed(x, model), D['tune'])
     accuracy = evaluate(emb_tu,
                       L['tune'],
-                      classifier)
-    return accuracy
+                      model)
+    return accuracy, model
 
 def full_train(D, L, params):
     model_a = train(D['train']['a'], params)
@@ -240,16 +258,75 @@ def full_train(D, L, params):
     return evaluate(D['tune'], L['tune'], model_a, model_c,
                     exemplars_a, exemplars_c), tup
 
-def evaluate(embeddings, labels, classifier):
-    correct = 0
+def evaluate(embeddings, labels, model):
+    tp = 0
+    fp = 0
+    tn = 0
+    fn = 0
+    gp = 0
+    gn = 0
     for i, brain in enumerate(embeddings):
-        evidence = classifier.predict_proba(brain.T)
+        evidence = model['classifier'].predict_proba(brain.T)
         a_evidence = np.sum(evidence[:, 0])
         c_evidence = np.sum(evidence[:, 1])
         guess = 1 if a_evidence > c_evidence else 2
-        if guess == labels[i]:
-            correct = correct + 1
-    return float(correct) / len(labels)
+        if guess == 1 and labels[i] == 1:
+            tp = tp + 1
+        elif guess == 1 and labels[i] == 2:
+            fp = fp + 1
+        elif guess == 2 and labels[i] == 1:
+            fn = fn + 1
+        elif guess == 2 and labels[1] == 2:
+            tn = tn + 1
+        if guess == 1:
+            gp = gp + 1
+        else:
+            gn = gn + 1
+        try:
+            precision = float(tp) / (tp + fp)
+        except:
+            precision = 0
+        try:
+            recall = float(tp) / (tp + fn)
+        except:
+            recall = 0
+    return precision, recall
+
+class big_model:
+    def __init__(self, models, base):
+        self.models = models
+        self.base = base
+    def evaluate(self, data, labels):
+        embeddings = self.embedding(data)
+        correct = 0
+        for i, brain in enumerate(embeddings):
+            evidence = self.predict(brain)
+            a_evidence = np.sum(evidence == 1)
+            c_evidence = np.sum(evidence == 2)
+            guess = 1 if a_evidence > c_evidence else 2
+            if guess == labels[i]:
+                correct = correct + 1
+        return float(correct) / len(labels)
+
+    def embedding(self, data):
+        emb = []
+        for d in data:
+            tmp = []
+            for m in self.models:
+                if self.base:
+                    tmp = data
+                else:
+                    tmp.append(embed(d, m))
+            emb.append(tmp)
+        return emb
+
+    def predict(self, embs):
+        preds = map(lambda x: x[0]['classifier'].predict_proba(x[1].T),
+            zip(self.models, embs))
+        a_ev = map(lambda x: np.sum(x[:, 0]), preds)
+        c_ev = map(lambda x: np.sum(x[:, 1]), preds)
+        decision = map(lambda x: 1 if x[0] > x[1] else 2, zip(a_ev, c_ev))
+        return decision
 
 def accuracy(ratios, labels, threshold):
     n = len(labels)
