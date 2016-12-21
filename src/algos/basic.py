@@ -27,7 +27,8 @@ def cluster_sort(x):
 	return _cluster_sort(*x)
 
 def correl(x):
-	return np.corrcoef(x)
+	X = np.corrcoef(x)
+	return X
 
 def _SSE(x, c):
 	clust_sses = []
@@ -40,6 +41,11 @@ def _SSE(x, c):
 def SSE(x):
 	return _SSE(*x)
 
+def mean(x):
+	return np.mean(x)
+
+def upper_tri(x):
+	return x[np.triu_indices(x.shape[0], 1)]
 def _silhouette(x, c):
 	inds = [0] * x.shape[0]
 	for i in xrange(len(c)):

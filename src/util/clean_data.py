@@ -50,13 +50,9 @@ def run_function(fnc, data):
         result.append(fnc(data[d]))
         if d == checkpoints[0]:
             checkpoints = checkpoints[1:]
-            print "Processed %04d of %04d brains." % (d, len(data))
+            #print "Processed %04d of %04d brains." % (d, len(data))
     return result
 
-def split_groups(data, dx_groups):
-    data_a = [i for (i, v) in zip(data, dx_groups == 1) if v]
-    data_c = [i for (i, v) in zip(data, dx_groups == 2) if v]
-    return {'a': data_a, 'c': data_c}
 
 def concat_group(data):
     return np.hstack(data)
@@ -141,9 +137,12 @@ def train(data, labels, params):
         'params' : params
     }
     emb_tr = embed(data, model)
-    classifier = KNN(params['nn']).fit(emb_tr.T, labels)
-    model['classifier'] = classifier
+    
     return model
+
+def get_knn(nn, train, labels):
+    classifier = KNN(nn).fit(train.T, labels)
+    return classifier
 
 def embed(data, M):
     W, L, R = get_views(data,
@@ -176,19 +175,6 @@ def load_and_randomize_data(good_md, n):
     data = run_function(transpose, data)
     return data, dx_groups
 
-def split_data(data, labels, n_train, n_tune, n_test):
-    D = {}
-    L = {}
-    data = run_function(mean_center, data)
-    D['train'] = split_groups(data[:n_train],
-                                 labels[:n_train])
-    D['train']['a'] = D['train']['a']
-    D['train']['c'] = D['train']['c']
-    D['tune'] = data[n_train:n_train+n_tune]
-    L['tune'] = labels[n_train:n_train+n_tune]
-    D['test'] = data[:-n_test]
-    L['test'] = labels[:-n_test]
-    return D, L
 
 def transpose(x):
     return x.T
@@ -230,8 +216,13 @@ def hyper_param_eval(D, L, params):
     samples = 3000
     D_tr = np.hstack((D_a[:, :samples], D_c[:, :samples]))
     labels = np.hstack(([1] * samples, [2] * samples))
-    model = train(D_tr, labels, params)
-    emb_tu = run_function(lambda x: embed(x, model), D['tune'])
+    U, _, _ = np.linalg.svd(D_tr)
+    phi = U[:, :2]
+    emb_tr = phi.T.dot(D_tr)
+    classifier = get_knn(params['nn'], emb_tr, labels)
+    model = {'classifier' : classifier}
+    #model = train(D_tr, labels, params)
+    emb_tu = run_function(lambda x: phi.T.dot(x), D['tune'])
     accuracy = evaluate(emb_tu,
                       L['tune'],
                       model)
