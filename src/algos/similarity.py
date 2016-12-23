@@ -70,7 +70,7 @@ def ap(X):
 	x, params = X
 	x[np.isnan(x)] = 0.0
 	x[np.isinf(x)] = 0.0
-	#x = -x + 1
+	x = x - 1
 	af = AffinityPropagation(**params)
 	af.fit(-x)
 	labs = af.labels_

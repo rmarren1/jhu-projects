@@ -15,6 +15,27 @@ def get_data(METADATA_PATH, PREFIX, POSTFIX):
     data = map(lambda p: np.loadtxt(p), f_names)
     return data, dx_groups, n
 
+def get_data2(MDP1, PRE1, POST1, MDP2, PRE2, POST2):
+    md1 = get_metadata(MDP1, ['FILE_ID', 'DX_GROUP'])
+    good_md1 = filter_file_names2(md1, PRE1, POST1, PRE2, POST2)
+    md2 = get_metadata(MDP2, ['FILE_ID', 'DX_GROUP'])
+    good_md2 = filter_file_names2(md2, PRE2, POST2, PRE1, POST1)
+    n = len(good_md1) # number of subjects
+    assert len(good_md1) == len(good_md2)
+    f_names1 = np.array(map(lambda x: x['FILE_ID'], good_md1))
+    dx_groups1 = np.array(map(lambda x: int(x['DX_GROUP']), good_md1))
+    f_names2 = np.array(map(lambda x: x['FILE_ID'], good_md2))
+    dx_groups2 = np.array(map(lambda x: int(x['DX_GROUP']), good_md2))
+    p = np.random.permutation(n)
+    f_names1 = f_names1[p]
+    dx_groups1 = dx_groups1[p]
+    f_names2 = f_names2[p]
+    dx_groups2 = dx_groups2[p]
+    data1 = map(lambda p: np.loadtxt(p), f_names1)
+    data2 = map(lambda p: np.loadtxt(p), f_names2)
+    assert np.sum(dx_groups1 - dx_groups2) == 0
+    return data1, data2, dx_groups1, dx_groups2, n
+
 def split_data(data, labels, n_train, n_tune, n_test):
     D = {}
     L = {}
@@ -56,6 +77,12 @@ def filter_file_names(meta_data, pre, post):
     good_md = filter(lambda x: file_exists(pre + x['FILE_ID'] + post), meta_data)
     for md in good_md:
         md['FILE_ID'] = pre + md['FILE_ID'] + post
+    return good_md
+
+def filter_file_names2(meta_data, pre1, post1, pre2, post2):
+    good_md = filter(lambda x: file_exists(pre1 + x['FILE_ID'] + post1) and file_exists(pre2 + x['FILE_ID'] + post2), meta_data)
+    for md in good_md:
+        md['FILE_ID'] = pre1 + md['FILE_ID'] + post1
     return good_md
 
 def file_exists(f_name):

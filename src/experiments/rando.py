@@ -8,9 +8,11 @@ def hyper_search(M, cp):
     import algos.similarity as sim
     import experiments.static as static
     import util.viz as viz
-
+    METADATA_PATH = '../data/Phenotypic_V1_0b_preprocessed1.csv'
+    PREFIX = '../data/rois_ez/'
+    POSTFIX = '_rois_ez.1D'
     # get meta-data of subjects
-    data, labels, num_patients = setup.get_data()
+    data, labels, num_patients = setup.get_data(METADATA_PATH, PREFIX, POSTFIX)
 
     # mean center all of the data
     data = cd.run_function(basic.mean_center, data)
